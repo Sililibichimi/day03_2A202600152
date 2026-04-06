@@ -83,7 +83,7 @@ class Chatbot:
                     continue
                 
                 response = self.run(user_input)
-                print(f"\nAssistant: {response}\n")
+                print("\nAssistant:", response, "\n")
                 print("-" * 60)
                 
             except KeyboardInterrupt:

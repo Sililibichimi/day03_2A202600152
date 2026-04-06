@@ -134,7 +134,7 @@ def run_agent_interactive():
                     continue
                 
                 response = agent.run(user_input)
-                print(f"\nAgent: {response}\n")
+                print("\nAgent:", response, "\n")
                 print("-" * 60)
                 
             except KeyboardInterrupt:
