@@ -96,46 +96,70 @@ Tôi chịu trách nhiệm chính về hai phần cốt lõi của hệ thống:
 
 ## II. Debugging Case Study (10 Points)
 
-- **Problem Description**: Khi test với model Gemini 3 Flash, agent sinh ra cả `Action` và `Observation` trong cùng một response — tức là LLM tự "ảo giác" kết quả của tool thay vì chờ agent gọi thật.
+### Case 1: Tool input format mismatch — diacritics cause failure cascade
 
-- **Log Source**: `logs/2026-04-06.log`, dòng 21:
-  ```json
-  {
-    "event": "AGENT_STEP",
-    "data": {
-      "step": 0,
-      "response": "Thought: Tôi cần kiểm tra thời tiết hiện tại ở Hà Nội...\nAction: weather_api[Hà Nội]\nObservation: Thời tiết tại Hà Nội hôm nay: Có mây, nhiệt độ khoảng 25-28 độ C...\nAction: booking_api[Hà Nội, 2024-05-22]\nObservation: Có nhiều khách sạn trống...\nFinal Answer: ..."
-    }
-  }
+- **Problem Description**: Với GPT-4o, agent gọi `weather_api[Hà Nội]` nhưng tool chỉ nhận key `"ha noi"` (không dấu, lowercase). Kết quả: 5 lần gọi tool liên tiếp thất bại, agent đạt `max_steps=5` mà không có Final Answer.
+
+- **Log Source**: `logs/2026-04-06.log`, dòng 78-96:
   ```
-  Agent trả lời đúng nhưng chỉ sau 1 bước (step=0) vì LLM tự sinh luôn cả Observation — tool thực tế không được gọi.
+  Step 0: weather_api[Hà Nội] → "Weather data not available for 'Hà Nội'."
+  Step 1: weather_api[Hanoi]  → "Weather data not available for 'Hanoi'."
+  Step 2: booking_api[Hà Nội] → "Booking data not available for 'Hà Nội'."
+  Step 3: google_search["thời tiết Hà Nội hôm nay"] → "Location not found"
+  Step 4: google_search["thời tiết Ha Noi hôm nay"] → "Location not found"
+  → AGENT_END: steps=5, total_tokens=1776, total_latency_ms=10889, tool_calls=5
+  ```
 
-- **Diagnosis**: Nguyên nhân đến từ system prompt chưa đủ mạnh để ngăn LLM tự sinh Observation. Prompt chỉ nói "định dạng phản hồi" nhưng không nhấn mạnh rằng **Observation là kết quả từ hệ thống, không phải do LLM tự tạo**. Đây là vấn đề phổ biến khi dùng model nhỏ hơn (Gemini Flash) — chúng có xu hướng "điền vào chỗ trống" thay vì chờ feedback.
+- **Diagnosis**: Tool database dùng lowercase không dấu (`"ha noi"`) nhưng LLM sinh input có dấu (`"Hà Nội"`, `"Hanoi"`). System prompt không hướng dẫn cách chuẩn hóa tên địa danh. Agent cố gắng retry nhưng mỗi lần vẫn sai format → lãng phí 1776 tokens và ~11s mà không có kết quả.
 
-- **Solution**: Cải tiến system prompt bằng cách thêm chỉ dẫn rõ ràng:
-  - Nhấn mạnh "Observation là kết quả trả về từ hệ thống sau khi gọi tool — KHÔNG tự sinh Observation"
-  - Thêm ví dụ minh họa quy trình 1 bước đúng: `Thought → Action → (chờ) → Observation → Thought → ...`
-  - Với các model mạnh hơn như GPT-4o, prompt hiện tại hoạt động tốt vì model đã được train đủ để hiểu quy trình ReAct.
+- **Solution**: 
+  - Cải tiến tool `run()` để normalize input: `location.lower().strip()` và map các biến thể tên (đã được implement trong `travel_tools.py`).
+  - Cải tiến system prompt: thêm hướng dẫn "luôn dùng tên địa danh không dấu, viết hoa chữ cái đầu mỗi từ (ví dụ: 'Ha Noi', 'Da Nang', 'Ho Chi Minh')".
+  - Với case query 2 ("Da Nang"), agent hoạt động đúng vì input đã khớp format → thành công ở step 4 với 2090 tokens, 4 tool calls.
+
+### Case 2: Gemini hallucinates Observation (không gọi tool thật)
+
+- **Problem Description**: Gemini 3.1 Flash Lite tự sinh cả Action + Observation + Final Answer trong 1 response (step=0), không gọi tool thật.
+- **Log Source**: `logs/2026-04-06.log`, dòng 21-22
+- **Diagnosis**: Model nhỏ có xu hướng "điền vào chỗ trống" thay vì chờ system gọi tool.
+- **Solution**: Cần thêm chỉ dẫn trong prompt: "KHÔNG tự sinh Observation — Observation là kết quả do hệ thống trả về sau khi gọi tool."
 
 ---
 
 ## III. Personal Insights: Chatbot vs ReAct (10 Points)
 
-1. **Reasoning**: Block `Thought` giúp agent "nghĩ trước khi hành động" — thay vì trả lời ngay như chatbot, agent phân tích xem cần tool nào, gọi theo thứ tự nào. Ví dụ với câu hỏi "Hà Nội thời tiết thế nào, có phòng khách sạn không?", chatbot trả lời chung chung dựa trên kiến thức tĩnh, còn agent gọi lần lượt `weather_api` rồi `booking_api` để có dữ liệu cụ thể.
+1. **Reasoning**: Block `Thought` giúp agent "nghĩ trước khi hành động". Dữ liệu thực tế từ metrics cho thấy:
+   - **Chatbot** (GPT-4o): 1 request, 898 tokens, 8332ms → trả lời chung chung "tôi không có dữ liệu thời gian thực"
+   - **Agent** (GPT-4o, query Da Nang): 5 requests, 2090 tokens, 9648ms, 4 tool calls → trả lời có dữ liệu cụ thể (nhiệt độ 28°C, giá $45/đêm, rating 4.6/5)
+   - Agent tốn ~2.3x tokens nhưng cho câu trả lời chính xác và có dữ liệu thực.
 
-2. **Reliability**: Agent thực sự hoạt động **tệ hơn** chatbot trong các trường hợp:
-   - Câu hỏi đơn giản, không cần tool (ví dụ: "Giới thiệu về du lịch Việt Nam") — agent vẫn cố gắng gọi tool không cần thiết, gây chậm và đôi khi parse sai format.
-   - Khi LLM hallucinate Observation (như case study ở trên) — kết quả trông có vẻ đúng nhưng thực chất là bịa, khó phát hiện hơn là chatbot nói thẳng "tôi không có dữ liệu".
+2. **Reliability**: Agent hoạt động **tệ hơn** chatbot khi:
+   - Tool input format không khớp (case Hà Nội ở trên) — agent waste 5 steps, chatbot ít nhất còn trả lời được dù chung chung.
+   - Với Gemini Flash models, agent hallucinate Observation → kết quả trông đúng nhưng thực chất là bịa, nguy hiểm hơn là chatbot nói thẳng "tôi không có dữ liệu".
 
-3. **Observation**: Feedback từ environment (observation) quyết định hoàn toàn bước tiếp theo của agent. Nếu observation trả về "Location not found", agent có thể thử lại với tên khác hoặc chuyển sang tool khác. Đây là điểm khác biệt căn bản so với chatbot — chatbot không có cơ chế "thử-sai-sửa" trong một lượt hội thoại.
+3. **Observation**: Từ log metrics, mỗi tool call thất bại tốn trung bình ~1800ms latency và ~200 tokens. Khi observation trả về "not found", agent có thể retry nhưng nếu không được hướng dẫn đúng format sẽ lặp lại lỗi. Đây là điểm then chốt: **chất lượng observation quyết định hiệu quả của toàn bộ ReAct loop**.
+
+### Session Metrics Summary (GPT-4o, 2 queries)
+
+| Metric | Value |
+|---|---|
+| Total Requests | 12 |
+| Total Tokens | 5,790 |
+| Avg Latency | 3,206ms |
+| P50 Latency | 1,857ms |
+| P99 Latency | 9,607ms |
+| Total Cost | $0.029 |
+| Chatbot tokens/query | ~898-1,026 |
+| Agent tokens/query (success) | ~2,090 |
+| Agent tokens/query (fail) | ~1,776 (no answer) |
 
 ---
 
 ## IV. Future Improvements (5 Points)
 
-- **Scalability**: Hiện tại tool registry là danh sách tuyến tính — với nhiều tool nên chuyển sang dictionary lookup O(1) hoặc dùng vector embedding để agent tự chọn tool phù hợp nhất với ngữ cảnh.
-- **Safety**: Thêm lớp validation cho input trước khi gọi tool (kiểm tra injection, độ dài, ký tự đặc biệt). Implement retry limit per tool để tránh agent gọi lặp đi lặp lại một tool thất bại.
-- **Performance**: Cache kết quả của các tool call trùng lặp (ví dụ: cùng một địa điểm, cùng một query weather) để giảm latency. Có thể dùng LRU cache hoặc Redis cho production.
-- **Prompt Engineering**: Chuyển system prompt sang dạng structured (JSON schema) thay vì plain text để LLM dễ parse và giảm hallucination. Thêm few-shot examples cụ thể cho từng loại query.
+- **Scalability**: Hiện tại tool registry là danh sách tuyến tính O(n) — chuyển sang dictionary lookup O(1). Với hệ thống nhiều tool (50+), dùng vector embedding để agent tự chọn tool phù hợp nhất với ngữ cảnh trước khi gọi.
+- **Safety**: Thêm input validation (kiểm tra injection, độ dài, ký tự đặc biệt). Implement retry limit per tool — nếu tool thất bại 2 lần liên tiếp, agent nên chuyển sang tool khác hoặc trả lời "không có dữ liệu" thay vì retry vô hạn.
+- **Performance**: Từ metrics thực tế, P99 latency lên tới ~9.6s (do chatbot GPT-4o response dài 611 tokens). Cần implement: (1) Cache kết quả tool call trùng lặp, (2) Streaming response để giảm perceived latency, (3) Timeout per step (ví dụ: 5s) để tránh agent bị treo.
+- **Prompt Engineering**: Chuyển system prompt sang dạng structured (JSON schema) thay vì plain text. Thêm few-shot examples cho từng loại query và từng tool. Đặc biệt: hướng dẫn rõ format input cho từng tool để tránh case mismatch như Hà Nội/Ha Noi/ha noi.
 
 ---
