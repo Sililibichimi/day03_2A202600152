@@ -1,6 +1,6 @@
-import os
+import ast
 import re
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from src.core.llm_provider import LLMProvider
 from src.telemetry.logger import logger
 
@@ -48,44 +48,85 @@ class ReActAgent:
 
     def run(self, user_input: str) -> str:
         """
-        TODO: Implement the ReAct loop logic.
-        1. Generate Thought + Action.
-        2. Parse Action and execute Tool.
-        3. Append Observation to prompt and repeat until Final Answer.
+        Execute the agent loop.
         """
-
         self.history = []
-
         logger.log_event("AGENT_START", {"input": user_input, "model": self.llm.model_name})
-        
-        current_prompt = user_input
+
+        prompt = user_input
         steps = 0
 
         while steps < self.max_steps:
-            self.history.append(current_prompt)
-            logger.log_event("AGENT_STEP", {"step": steps, "prompt": current_prompt})
-            response = self.llm.generate(current_prompt, system_prompt=self.get_system_prompt())
-            content = response.strip()
-            self.history.append(content)
-            
-            # Parse Thought/Action from result
-            
+            # TODO: Generate LLM response
+            response = self.llm.generate_response(self.get_system_prompt(), self.history, prompt)
+            self.history.append({"role": "assistant", "content": response})
+            logger.log_event("AGENT_STEP",{"step":steps,"response": response})
+            # TODO: Parse Thought/Action from result
+            action_match = re.search(r"Action:\s*(\w+)\[([^\]]*)\]", response)
+            final_match = re.search(r"Final Answer:\s*(.*)", response, re.DOTALL)
+
+
 
             # TODO: If Action found -> Call tool -> Append Observation
-            
-            # TODO: If Final Answer found -> Break loop
-            
+            if action_match:
+                tool_name = action_match.group(1).strip()
+                tool_input = action_match.group(2).strip()
+                logger.log_event("TOOL_CALL", {"tool": tool_name, "input": tool_input})
+
+            if tool_name in self.tools:
+                observation = self.tools[tool_name].run(tool_input)
+            else:
+                observation = f"Error: tool '{tool_name}' not found."
+
+            logger.log_event("OBSERVATION", {"observation": observation})
+            prompt = f"Observation: {observation}"
+            self.history.append({"role": "user", "content": prompt})
+
             steps += 1
+            # TODO: If Final Answer found -> Break loop
+            if final_match:
+                final_answer = final_match.group(1).strip()
+                logger.log_event("FINAL_ANSWER", {"answer": final_answer, "steps": steps})
+            return final_answer
             
         logger.log_event("AGENT_END", {"steps": steps})
         return "Not implemented. Fill in the TODOs!"
 
     def _execute_tool(self, tool_name: str, args: str) -> str:
         """
-        Helper method to execute tools by name.
+        Find a tool by name and call its function with parsed arguments.
         """
         for tool in self.tools:
-            if tool['name'] == tool_name:
-                # TODO: Implement dynamic function calling or simple if/else
-                return f"Result of {tool_name}"
+            if tool.get("name") == tool_name:
+                tool_func = tool.get("func")
+                if not callable(tool_func):
+                    return f"Tool '{tool_name}' is present but has no callable func."
+
+                parsed_args = self._parse_tool_arguments(args)
+                try:
+                    if isinstance(parsed_args, tuple):
+                        return str(tool_func(*parsed_args))
+                    if isinstance(parsed_args, list):
+                        return str(tool_func(*parsed_args))
+                    if parsed_args == "" or parsed_args is None:
+                        return str(tool_func())
+                    return str(tool_func(parsed_args))
+                except Exception as exc:
+                    logger.error(f"Error executing tool {tool_name}: {exc}")
+                    return f"Error executing tool {tool_name}: {exc}"
+
         return f"Tool {tool_name} not found."
+
+    def _parse_tool_arguments(self, args: str) -> Any:
+        """
+        Convert a string of arguments into Python types when possible.
+        """
+        if not args:
+            return ""
+
+        sanitized = args.strip()
+        try:
+            parsed = ast.literal_eval(sanitized)
+            return parsed
+        except (ValueError, SyntaxError):
+            return sanitized
