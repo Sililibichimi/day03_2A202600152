@@ -57,13 +57,15 @@ class ReActAgent:
         steps = 0
 
         while steps < self.max_steps:
-            self.history.append(current_prompt)
-            logger.log_event("AGENT_STEP", {"step": steps, "prompt": current_prompt})
-            response = self.llm.generate(current_prompt, system_prompt=self.get_system_prompt())
-            
-            
-            # Parse Thought/Action from result
-            
+            # TODO: Generate LLM response
+            response = self.llm.generate_response(self.get_system_prompt(), self.history, prompt)
+            self.history.append({"role": "assistant", "content": response})
+            logger.log_event("AGENT_STEP",{"step":steps,"response": response})
+            # TODO: Parse Thought/Action from result
+            action_match = re.search(r"Action:\s*(\w+)\[([^\]]*)\]", response)
+            final_match = re.search(r"Final Answer:\s*(.*)", response, re.DOTALL)
+
+
 
             # TODO: If Action found -> Call tool -> Append Observation
             if action_match:
@@ -92,13 +94,13 @@ class ReActAgent:
 
     def _execute_tool(self, tool_name: str, args: str) -> str:
         """
-        Find a tool by name and call its function with parsed arguments.
+        Find a tool by name and call a its function with parsed arguments.
         """
         for tool in self.tools:
             if tool.get("name") == tool_name:
                 tool_func = tool.get("func")
                 if not callable(tool_func):
-                    return f"Tool '{tool_name}' is present but has no callable func."
+                    return f"Tool '{tool_name}' is present  but has no callable func."
 
                 parsed_args = self._parse_tool_arguments(args)
                 try:
