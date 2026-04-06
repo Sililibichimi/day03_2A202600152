@@ -27,7 +27,7 @@ class ReActAgent:
 
         Dựa trên thông tin mà người dùng cung cấp, hãy sử dụng các công cụ trên để thu thập thông tin cần thiết và đưa ra gợi ý về các địa điểm du lịch phù hợp.
 
-        Hãy tuân theo định dạng sau:
+        Hãy tuân theo chỉ dẫn sau:
         - Hãy đưa ra ít nhất 3 gợi ý về địa điểm du lịch.
         - Với mỗi địa điểm du lịch mà bạn gợi ý, hãy cung cấp thông tin chi tiết bao gồm:
             + Tên địa điểm
@@ -36,7 +36,7 @@ class ReActAgent:
             + Thông tin về tình trạng phòng khách sạn gần địa điểm đó (nếu có thể) 
             + Tips để có thể tận hưởng chuyến đi tốt nhất (nếu có thể)
 
-        Sử dụng luồng suy nghĩ sau để đưa ra gợi ý:
+        Kết quả trả về tuân theo định dạng sau:
         Thought: suy nghĩ của bạn về yêu cầu của người dùng và cách bạn sẽ sử dụng các công cụ.
         Action: công cụ bạn sẽ sử dụng và các tham số của nó.
         Observation: kết quả trả về từ công cụ sau khi bạn thực hiện Action.
