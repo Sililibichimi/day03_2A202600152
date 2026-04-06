@@ -20,7 +20,7 @@ from src.agent.agent import ReActAgent
 from src.tools import get_all_tools
 
 
-def get_llm_provider(provider_name: str = "openai"):
+def get_llm_provider(provider_name: str = "gemini"):
     """Get the configured LLM provider."""
     load_dotenv()
     
