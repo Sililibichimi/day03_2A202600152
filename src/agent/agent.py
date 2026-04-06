@@ -65,8 +65,7 @@ class ReActAgent:
             self.history.append(current_prompt)
             logger.log_event("AGENT_STEP", {"step": steps, "prompt": current_prompt})
             response = self.llm.generate(current_prompt, system_prompt=self.get_system_prompt())
-            content = response.strip()
-            self.history.append(content)
+            
             
             # Parse Thought/Action from result
             
@@ -87,5 +86,10 @@ class ReActAgent:
         for tool in self.tools:
             if tool['name'] == tool_name:
                 # TODO: Implement dynamic function calling or simple if/else
+                fn = tool.get('function') or tool.get('func')
+                if not callable(fn): 
+                    return f"Tool {tool_name} is not callable."
+                
+                parse_args = re.split(r'\s*,\s*', args.strip())
                 return f"Result of {tool_name}"
         return f"Tool {tool_name} not found."
