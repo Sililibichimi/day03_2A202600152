@@ -48,11 +48,15 @@ class GeminiProvider(LLMProvider):
         for chunk in response:
             yield chunk.text
 
-    def generate_response(self, system_prompt: str, history: list, prompt: str) -> str:
+    def generate_response(self, system_prompt: str, history: list, prompt: str) -> dict:
         """
         Generate a response with full conversation history.
         Overrides base class to properly handle multi-turn conversations for Gemini.
+        Returns dict with content, usage, latency_ms, and provider.
         """
+        import time
+        start_time = time.time()
+
         # Build a string representation of the conversation history
         conversation = ""
         if system_prompt:
@@ -66,4 +70,20 @@ class GeminiProvider(LLMProvider):
         conversation += f"User: {prompt}"
         
         response = self.model.generate_content(conversation)
-        return response.text
+
+        end_time = time.time()
+        latency_ms = int((end_time - start_time) * 1000)
+
+        content = response.text
+        usage = {
+            "prompt_tokens": response.usage_metadata.prompt_token_count,
+            "completion_tokens": response.usage_metadata.candidates_token_count,
+            "total_tokens": response.usage_metadata.total_token_count
+        }
+
+        return {
+            "content": content,
+            "usage": usage,
+            "latency_ms": latency_ms,
+            "provider": "google"
+        }

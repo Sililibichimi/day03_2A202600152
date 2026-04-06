@@ -3,6 +3,7 @@ import re
 from typing import List, Dict, Any, Optional, Tuple
 from src.core.llm_provider import LLMProvider
 from src.telemetry.logger import logger
+from src.telemetry.metrics import tracker
 
 
 class ReActAgent:
@@ -11,6 +12,9 @@ class ReActAgent:
         self.tools = tools
         self.max_steps = max_steps
         self.history = []
+        self.total_tokens = 0
+        self.total_latency_ms = 0
+        self.tool_calls = 0
 
     def get_system_prompt(self):
         return """
@@ -29,25 +33,40 @@ Final Answer: cau tra loi cuoi cung
 
     def run(self, user_input):
         self.history = []
+        self.total_tokens = 0
+        self.total_latency_ms = 0
+        self.tool_calls = 0
         logger.log_event("AGENT_START", {"input": user_input, "model": self.llm.model_name})
         prompt = user_input
         steps = 0
         while steps < self.max_steps:
-            response = self.llm.generate_response(self.get_system_prompt(), self.history, prompt)
+            result = self.llm.generate_response(self.get_system_prompt(), self.history, prompt)
+            response = result["content"]
             self.history.append({"role": "assistant", "content": response})
-            logger.log_event("AGENT_STEP", {"step": steps, "response": response})
+
+            # Track per-step metrics
+            usage = result.get("usage", {})
+            latency = result.get("latency_ms", 0)
+            provider = result.get("provider", "unknown")
+            tracker.track_request(provider, self.llm.model_name, usage, latency)
+
+            self.total_tokens += usage.get("total_tokens", 0)
+            self.total_latency_ms += latency
+
+            logger.log_event("AGENT_STEP", {"step": steps, "response": response, "tokens": usage.get("total_tokens", 0), "latency_ms": latency})
 
             action_match = re.search(r"Action:\s*(\w+)\[([^\]]*)\]", response)
             final_match = re.search(r"Final Answer:\s*(.*)", response, re.DOTALL)
 
             if final_match:
                 final_answer = final_match.group(1).strip()
-                logger.log_event("FINAL_ANSWER", {"answer": final_answer, "steps": steps})
+                logger.log_event("FINAL_ANSWER", {"answer": final_answer, "steps": steps, "total_tokens": self.total_tokens, "total_latency_ms": self.total_latency_ms, "tool_calls": self.tool_calls})
                 return final_answer
 
             if action_match:
                 tool_name = action_match.group(1).strip()
                 tool_input = action_match.group(2).strip()
+                self.tool_calls += 1
                 logger.log_event("TOOL_CALL", {"tool": tool_name, "input": tool_input})
                 observation = self._execute_tool(tool_name, tool_input)
                 logger.log_event("OBSERVATION", {"observation": observation})
@@ -60,7 +79,7 @@ Final Answer: cau tra loi cuoi cung
 
             steps += 1
 
-        logger.log_event("AGENT_END", {"steps": steps})
+        logger.log_event("AGENT_END", {"steps": steps, "total_tokens": self.total_tokens, "total_latency_ms": self.total_latency_ms, "tool_calls": self.tool_calls})
         return "Max steps reached without final answer."
 
     def _execute_tool(self, tool_name, args):

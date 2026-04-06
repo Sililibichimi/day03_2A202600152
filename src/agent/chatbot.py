@@ -1,6 +1,7 @@
 from typing import List, Dict, Any, Optional
 from src.core.llm_provider import LLMProvider
 from src.telemetry.logger import logger
+from src.telemetry.metrics import tracker
 
 
 class Chatbot:
@@ -49,14 +50,21 @@ class Chatbot:
         self.history.append({"role": "user", "content": user_input})
 
         # Generate response directly from LLM (no agent loop)
-        response = self.llm.generate_response(
+        result = self.llm.generate_response(
             system_prompt=self.get_system_prompt(),
             history=self.history,
             prompt=user_input
         )
+        response = result["content"]
+
+        # Track metrics
+        usage = result.get("usage", {})
+        latency = result.get("latency_ms", 0)
+        provider = result.get("provider", "unknown")
+        tracker.track_request(provider, self.llm.model_name, usage, latency)
 
         # Log the response
-        logger.log_event("CHATBOT_RESPONSE", {"response": response})
+        logger.log_event("CHATBOT_RESPONSE", {"response": response, "tokens": usage.get("total_tokens", 0), "latency_ms": latency})
         self.history.append({"role": "assistant", "content": response})
 
         logger.log_event("CHATBOT_END", {"total_messages": len(self.history)})

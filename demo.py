@@ -18,6 +18,7 @@ from src.core.gemini_provider import GeminiProvider
 from src.agent.chatbot import Chatbot
 from src.agent.agent import ReActAgent
 from src.tools import get_all_tools
+from src.telemetry.metrics import tracker
 
 
 def get_llm_provider(provider_name: str = "gemini"):
@@ -93,6 +94,15 @@ def compare_chatbot_vs_agent():
             print(f"❌ Error: {e}")
         
         print()
+
+    # Print session metrics summary
+    print("\n" + "=" * 70)
+    print("📊 SESSION METRICS SUMMARY")
+    print("=" * 70)
+    summary = tracker.get_session_summary()
+    for key, value in summary.items():
+        print(f"  {key}: {value}")
+    print("=" * 70)
 
 
 def run_chatbot_interactive():

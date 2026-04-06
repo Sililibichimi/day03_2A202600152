@@ -39,10 +39,11 @@ class OpenAIProvider(LLMProvider):
             "provider": "openai"
         }
 
-    def generate_response(self, system_prompt: str, history: list, prompt: str) -> str:
+    def generate_response(self, system_prompt: str, history: list, prompt: str) -> dict:
         """
         Generate a response with full conversation history.
         Overrides base class to properly handle multi-turn conversations.
+        Returns dict with content, usage, latency_ms, and provider.
         """
         start_time = time.time()
         
@@ -59,7 +60,22 @@ class OpenAIProvider(LLMProvider):
             messages=messages,
         )
 
-        return response.choices[0].message.content
+        end_time = time.time()
+        latency_ms = int((end_time - start_time) * 1000)
+
+        content = response.choices[0].message.content
+        usage = {
+            "prompt_tokens": response.usage.prompt_tokens,
+            "completion_tokens": response.usage.completion_tokens,
+            "total_tokens": response.usage.total_tokens
+        }
+
+        return {
+            "content": content,
+            "usage": usage,
+            "latency_ms": latency_ms,
+            "provider": "openai"
+        }
 
     def stream(self, prompt: str, system_prompt: Optional[str] = None) -> Generator[str, None, None]:
         messages = []

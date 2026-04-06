@@ -88,11 +88,14 @@ class LocalProvider(LLMProvider):
             if token:
                 yield token
 
-    def generate_response(self, system_prompt: str, history: list, prompt: str) -> str:
+    def generate_response(self, system_prompt: str, history: list, prompt: str) -> dict:
         """
         Generate a response with full conversation history.
         Overrides base class to properly handle multi-turn conversations for local models.
+        Returns dict with content, usage, latency_ms, and provider.
         """
+        start_time = time.time()
+
         # Build conversation with proper formatting
         full_prompt = ""
         
@@ -117,5 +120,20 @@ class LocalProvider(LLMProvider):
             stop=["<|end|>", "Observation:"],
             echo=False
         )
+
+        end_time = time.time()
+        latency_ms = int((end_time - start_time) * 1000)
         
-        return response["choices"][0]["text"].strip()
+        content = response["choices"][0]["text"].strip()
+        usage = {
+            "prompt_tokens": response["usage"]["prompt_tokens"],
+            "completion_tokens": response["usage"]["completion_tokens"],
+            "total_tokens": response["usage"]["total_tokens"]
+        }
+
+        return {
+            "content": content,
+            "usage": usage,
+            "latency_ms": latency_ms,
+            "provider": "local"
+        }
